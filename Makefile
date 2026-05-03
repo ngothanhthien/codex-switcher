@@ -2,29 +2,29 @@ SHELL := /bin/sh
 
 UPSTREAM_BRANCH ?= upstream/main
 BUNDLE_DIR := src-tauri/target/release/bundle
-APP_NAME := Codex Switcher
+DEB_DIR := $(BUNDLE_DIR)/deb
+PACKAGE_NAME := codex-switcher
 APP_PROCESS := codex-switcher
 
-.PHONY: check-update update build stop-app install-local
+.PHONY: check-update update build stop-app install-deb
 
 check-update:
 	@git fetch upstream
-	@local_ref=$$(git rev-parse HEAD); \
-	upstream_ref=$$(git rev-parse $(UPSTREAM_BRANCH)); \
-	base_ref=$$(git merge-base HEAD $(UPSTREAM_BRANCH)); \
-	if [ "$$local_ref" = "$$upstream_ref" ]; then \
-		echo "Already up to date with $(UPSTREAM_BRANCH)."; \
-	elif [ "$$local_ref" = "$$base_ref" ]; then \
-		echo "Updates available from $(UPSTREAM_BRANCH):"; \
-		git --no-pager log --oneline HEAD..$(UPSTREAM_BRANCH); \
-	elif [ "$$upstream_ref" = "$$base_ref" ]; then \
-		echo "Local branch is ahead of $(UPSTREAM_BRANCH):"; \
-		git --no-pager log --oneline $(UPSTREAM_BRANCH)..HEAD; \
+	@missing_count=$$(git rev-list --count HEAD..$(UPSTREAM_BRANCH)); \
+	local_count=$$(git rev-list --count $(UPSTREAM_BRANCH)..HEAD); \
+	if [ "$$missing_count" -eq 0 ]; then \
+		echo "No upstream updates found on $(UPSTREAM_BRANCH)."; \
 	else \
-		echo "Local branch and $(UPSTREAM_BRANCH) have diverged."; \
-		echo "Upstream commits:"; \
+		echo "$$missing_count upstream commit(s) available from $(UPSTREAM_BRANCH):"; \
 		git --no-pager log --oneline HEAD..$(UPSTREAM_BRANCH); \
-		echo "Local commits:"; \
+	fi; \
+	if [ "$$local_count" -gt 0 ]; then \
+		echo ""; \
+		if [ "$$missing_count" -gt 0 ]; then \
+			echo "$$local_count local commit(s) will be replayed when you run make update:"; \
+		else \
+			echo "$$local_count local fork commit(s):"; \
+		fi; \
 		git --no-pager log --oneline $(UPSTREAM_BRANCH)..HEAD; \
 	fi
 
@@ -33,55 +33,32 @@ update:
 	git rebase $(UPSTREAM_BRANCH)
 
 build: stop-app
-	pnpm tauri build
-	$(MAKE) install-local
+	pnpm tauri build --bundles deb
+	$(MAKE) install-deb
 
 stop-app:
-	@os=$$(uname -s); \
-	case "$$os" in \
-		Darwin) \
-			osascript -e 'quit app "$(APP_NAME)"' >/dev/null 2>&1 || true; \
-			pkill -x "$(APP_NAME)" >/dev/null 2>&1 || true; \
-			;; \
-		Linux) \
-			pkill -x "$(APP_PROCESS)" >/dev/null 2>&1 || true; \
-			;; \
-		MINGW*|MSYS*|CYGWIN*) \
-			powershell.exe -NoProfile -Command "Get-Process 'codex-switcher' -ErrorAction SilentlyContinue | Stop-Process -Force" >/dev/null 2>&1 || true; \
-			;; \
-	esac
+	@if pgrep -x "$(APP_PROCESS)" >/dev/null 2>&1; then \
+		echo "Stopping running $(APP_PROCESS)..."; \
+		pkill -x "$(APP_PROCESS)" || true; \
+		for attempt in 1 2 3 4 5; do \
+			if ! pgrep -x "$(APP_PROCESS)" >/dev/null 2>&1; then \
+				break; \
+			fi; \
+			sleep 1; \
+		done; \
+		if pgrep -x "$(APP_PROCESS)" >/dev/null 2>&1; then \
+			echo "Force stopping $(APP_PROCESS)..."; \
+			pkill -9 -x "$(APP_PROCESS)" || true; \
+		fi; \
+	fi
 
-install-local:
-	@os=$$(uname -s); \
-	case "$$os" in \
-		Darwin) \
-			app_path="$$(find "$(BUNDLE_DIR)/macos" -maxdepth 1 -name '*.app' -print -quit 2>/dev/null)"; \
-			if [ -n "$$app_path" ]; then \
-				rm -rf "/Applications/$$(basename "$$app_path")"; \
-				cp -R "$$app_path" /Applications/; \
-				echo "Installed $$(basename "$$app_path") to /Applications."; \
-			else \
-				echo "macOS app bundle not found under $(BUNDLE_DIR)/macos."; \
-			fi; \
-			;; \
-		Linux) \
-			deb_path="$$(find "$(BUNDLE_DIR)/deb" -name '*.deb' -print -quit 2>/dev/null)"; \
-			appimage_path="$$(find "$(BUNDLE_DIR)/appimage" -name '*.AppImage' -print -quit 2>/dev/null)"; \
-			if [ -n "$$deb_path" ] && command -v dpkg >/dev/null 2>&1; then \
-				sudo dpkg -i "$$deb_path"; \
-			elif [ -n "$$appimage_path" ]; then \
-				mkdir -p "$$HOME/.local/bin"; \
-				cp "$$appimage_path" "$$HOME/.local/bin/codex-switcher"; \
-				chmod +x "$$HOME/.local/bin/codex-switcher"; \
-				echo "Installed AppImage to $$HOME/.local/bin/codex-switcher."; \
-			else \
-				echo "No installable Linux bundle found under $(BUNDLE_DIR)."; \
-			fi; \
-			;; \
-		MINGW*|MSYS*|CYGWIN*) \
-			echo "Windows bundle built under $(BUNDLE_DIR). Run the generated installer manually."; \
-			;; \
-		*) \
-			echo "Unsupported OS $$os. Bundle output is under $(BUNDLE_DIR)."; \
-			;; \
-	esac
+install-deb:
+	@deb_path=$$(find "$(DEB_DIR)" -name '*.deb' -print 2>/dev/null | sort | tail -n 1); \
+	if [ -z "$$deb_path" ]; then \
+		echo "No .deb bundle found under $(DEB_DIR)."; \
+		exit 1; \
+	fi; \
+	echo "Installing $$deb_path..."; \
+	sudo dpkg -i "$$deb_path"; \
+	echo "Installed package status:"; \
+	dpkg-query -W -f='$${Package} $${Version} $${Status}\n' "$(PACKAGE_NAME)"
