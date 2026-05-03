@@ -1,7 +1,7 @@
 //! Account switching logic - writes credentials to ~/.codex/auth.json
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -29,9 +29,13 @@ pub fn get_codex_auth_file() -> Result<PathBuf> {
 /// Switch to a specific account by writing its credentials to ~/.codex/auth.json
 pub fn switch_to_account(account: &StoredAccount) -> Result<()> {
     let codex_home = get_codex_home()?;
+    write_account_auth_to_dir(account, &codex_home)
+}
 
+/// Write a specific account's credentials to a Codex home directory.
+pub fn write_account_auth_to_dir(account: &StoredAccount, codex_home: &Path) -> Result<()> {
     // Ensure the codex home directory exists
-    fs::create_dir_all(&codex_home)
+    fs::create_dir_all(codex_home)
         .with_context(|| format!("Failed to create codex home: {}", codex_home.display()))?;
 
     let auth_json = create_auth_json(account)?;

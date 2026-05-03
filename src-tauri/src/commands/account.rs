@@ -1,9 +1,10 @@
 //! Account management Tauri commands
 
 use crate::auth::{
-    add_account, create_chatgpt_account_from_refresh_token, get_active_account,
-    import_from_auth_json, import_from_auth_json_contents, load_accounts, remove_account,
-    save_accounts, set_active_account, switch_to_account, touch_account,
+    add_account, create_chatgpt_account_from_refresh_token, ensure_chatgpt_tokens_fresh,
+    get_active_account, get_config_dir, import_from_auth_json, import_from_auth_json_contents,
+    load_accounts, remove_account, save_accounts, set_active_account, switch_to_account,
+    touch_account, write_account_auth_to_dir,
 };
 use crate::types::{AccountInfo, AccountsStore, AuthData, ImportAccountsSummary, StoredAccount};
 
@@ -21,6 +22,7 @@ use sha2::Sha256;
 use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
+use std::path::Path;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -64,6 +66,13 @@ struct SlimAccountPayload {
     api_key: Option<String>,
     #[serde(rename = "r", skip_serializing_if = "Option::is_none")]
     refresh_token: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct CliLaunchCommand {
+    pub account_id: String,
+    pub codex_home: String,
+    pub command: String,
 }
 
 /// List all accounts with their info
@@ -180,6 +189,34 @@ pub async fn rename_account(account_id: String, new_name: String) -> Result<(), 
     crate::auth::storage::update_account_metadata(&account_id, Some(new_name), None, None, None)
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Prepare an isolated CODEX_HOME directory for running Codex CLI with one account.
+#[tauri::command]
+pub async fn prepare_cli_profile(account_id: String) -> Result<CliLaunchCommand, String> {
+    let store = load_accounts().map_err(|e| e.to_string())?;
+    let account = store
+        .accounts
+        .iter()
+        .find(|a| a.id == account_id)
+        .ok_or_else(|| format!("Account not found: {account_id}"))?;
+
+    let account = ensure_chatgpt_tokens_fresh(account)
+        .await
+        .map_err(|e| e.to_string())?;
+    let profile_dir = get_config_dir()
+        .map_err(|e| e.to_string())?
+        .join("profiles")
+        .join(profile_dir_name(&account.id).map_err(|e| e.to_string())?);
+
+    write_account_auth_to_dir(&account, &profile_dir).map_err(|e| e.to_string())?;
+
+    let codex_home = profile_dir.to_string_lossy().to_string();
+    Ok(CliLaunchCommand {
+        account_id: account.id,
+        command: build_cli_command(&profile_dir),
+        codex_home,
+    })
 }
 
 /// Export minimal account config as a compact text string.
@@ -646,6 +683,49 @@ fn read_encrypted_file(path: &str) -> anyhow::Result<Vec<u8>> {
     fs::read(path).with_context(|| format!("Failed to read file: {path}"))
 }
 
+fn profile_dir_name(account_id: &str) -> anyhow::Result<String> {
+    let name = account_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+
+    if name.trim_matches('_').is_empty() {
+        anyhow::bail!("Account ID cannot be used as a profile directory name");
+    }
+
+    Ok(name)
+}
+
+fn build_cli_command(codex_home: &Path) -> String {
+    let path = codex_home.to_string_lossy();
+
+    #[cfg(windows)]
+    {
+        format!("$env:CODEX_HOME={}; codex", quote_powershell(&path))
+    }
+
+    #[cfg(not(windows))]
+    {
+        format!("CODEX_HOME={} codex", quote_posix_shell(&path))
+    }
+}
+
+#[cfg(not(windows))]
+fn quote_posix_shell(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(windows)]
+fn quote_powershell(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
 fn validate_imported_store(store: &AccountsStore) -> anyhow::Result<()> {
     let mut ids = HashSet::new();
     let mut names = HashSet::new();
@@ -735,4 +815,25 @@ pub async fn get_masked_account_ids() -> Result<Vec<String>, String> {
 #[tauri::command]
 pub async fn set_masked_account_ids(ids: Vec<String>) -> Result<(), String> {
     crate::auth::storage::set_masked_account_ids(ids).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitizes_profile_directory_names() {
+        assert_eq!(
+            profile_dir_name("account/../one").unwrap(),
+            "account____one"
+        );
+        assert!(profile_dir_name("///").is_err());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn builds_posix_cli_command_with_shell_quoting() {
+        let command = build_cli_command(Path::new("/tmp/codex profiles/a'b"));
+        assert_eq!(command, "CODEX_HOME='/tmp/codex profiles/a'\\''b' codex");
+    }
 }

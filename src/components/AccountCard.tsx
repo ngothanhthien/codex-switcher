@@ -6,12 +6,14 @@ interface AccountCardProps {
   account: AccountWithUsage;
   onSwitch: () => void;
   onWarmup: () => Promise<void>;
+  onCopyCliCommand: () => Promise<void>;
   onDelete: () => void;
   onRefresh: () => Promise<void>;
   onRename: (newName: string) => Promise<void>;
   switching?: boolean;
   switchDisabled?: boolean;
   warmingUp?: boolean;
+  copyingCliCommand?: boolean;
   masked?: boolean;
   onToggleMask?: () => void;
 }
@@ -88,12 +90,14 @@ export function AccountCard({
   account,
   onSwitch,
   onWarmup,
+  onCopyCliCommand,
   onDelete,
   onRefresh,
   onRename,
   switching,
   switchDisabled,
   warmingUp,
+  copyingCliCommand,
   masked = false,
   onToggleMask,
 }: AccountCardProps) {
@@ -284,6 +288,24 @@ export function AccountCard({
             {switching ? "Switching..." : switchDisabled ? "Codex Running" : "Switch"}
           </button>
         )}
+        <button
+          onClick={() => {
+            void onCopyCliCommand();
+          }}
+          disabled={copyingCliCommand}
+          className={`px-3 py-2 text-sm rounded-lg transition-colors ${
+            copyingCliCommand
+              ? "bg-blue-100 dark:bg-blue-900/30 text-blue-500 dark:text-blue-300"
+              : "bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-300"
+          }`}
+          title={
+            copyingCliCommand
+              ? "Preparing isolated CODEX_HOME..."
+              : "Copy isolated Codex CLI command"
+          }
+        >
+          <span className={copyingCliCommand ? "animate-pulse" : ""}>$</span>
+        </button>
         <button
           onClick={() => {
             void onWarmup();

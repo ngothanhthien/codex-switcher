@@ -14,8 +14,8 @@ use crate::commands::{
     complete_login, delete_account, export_accounts_full_encrypted_bytes,
     export_accounts_slim_text, get_active_account_info, get_masked_account_ids, get_usage,
     import_accounts_full_encrypted_bytes, import_accounts_slim_text, list_accounts,
-    refresh_account_metadata, refresh_all_accounts_usage, rename_account, set_masked_account_ids,
-    start_login, switch_account, warmup_account, warmup_all_accounts,
+    prepare_cli_profile, refresh_account_metadata, refresh_all_accounts_usage, rename_account,
+    set_masked_account_ids, start_login, switch_account, warmup_account, warmup_all_accounts,
 };
 
 #[derive(Debug, Deserialize)]
@@ -154,6 +154,10 @@ async fn invoke_web_command(command: &str, payload: Value) -> Result<Value, Stri
         "switch_account" => {
             let args: AccountIdArgs = parse_args(payload)?;
             to_json(switch_account(args.account_id).await?)
+        }
+        "prepare_cli_profile" => {
+            let args: AccountIdArgs = parse_args(payload)?;
+            to_json(prepare_cli_profile(args.account_id).await?)
         }
         "delete_account" => {
             let args: AccountIdArgs = parse_args(payload)?;

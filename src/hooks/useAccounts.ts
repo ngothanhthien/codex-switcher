@@ -5,6 +5,7 @@ import type {
   AccountWithUsage,
   WarmupSummary,
   ImportAccountsSummary,
+  CliLaunchCommand,
 } from "../types";
 import { invokeBackend, type FileSource } from "../lib/platform";
 
@@ -233,6 +234,14 @@ export function useAccounts() {
     [loadAccounts]
   );
 
+  const prepareCliProfile = useCallback(async (accountId: string) => {
+    try {
+      return await invokeBackend<CliLaunchCommand>("prepare_cli_profile", { accountId });
+    } catch (err) {
+      throw err;
+    }
+  }, []);
+
   const deleteAccount = useCallback(
     async (accountId: string) => {
       try {
@@ -399,6 +408,7 @@ export function useAccounts() {
     warmupAccount,
     warmupAllAccounts,
     switchAccount,
+    prepareCliProfile,
     deleteAccount,
     renameAccount,
     importFromFile,

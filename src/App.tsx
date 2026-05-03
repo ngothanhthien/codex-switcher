@@ -29,6 +29,7 @@ function App() {
     warmupAccount,
     warmupAllAccounts,
     switchAccount,
+    prepareCliProfile,
     deleteAccount,
     renameAccount,
     importFromFile,
@@ -59,6 +60,13 @@ function App() {
   const [isImportingFull, setIsImportingFull] = useState(false);
   const [isWarmingAll, setIsWarmingAll] = useState(false);
   const [warmingUpId, setWarmingUpId] = useState<string | null>(null);
+  const [copyingCliCommandId, setCopyingCliCommandId] = useState<string | null>(null);
+  const [cliCommandDialog, setCliCommandDialog] = useState<{
+    accountName: string;
+    command: string;
+  } | null>(null);
+  const [cliCommandCopied, setCliCommandCopied] = useState(false);
+  const [cliCommandCopyError, setCliCommandCopyError] = useState<string | null>(null);
   const [refreshSuccess, setRefreshSuccess] = useState(false);
   const [warmupToast, setWarmupToast] = useState<{
     message: string;
@@ -320,6 +328,44 @@ function App() {
       showWarmupToast(`Warm-up all failed: ${formatWarmupError(err)}`, true);
     } finally {
       setIsWarmingAll(false);
+    }
+  };
+
+  const handleCopyCliCommand = async (accountId: string, accountName: string) => {
+    try {
+      setCopyingCliCommandId(accountId);
+      const launchCommand = await prepareCliProfile(accountId);
+      try {
+        await navigator.clipboard.writeText(launchCommand.command);
+        showWarmupToast(`CLI command copied for ${accountName}`);
+      } catch (err) {
+        console.error("Clipboard write failed:", err);
+        setCliCommandDialog({ accountName, command: launchCommand.command });
+        setCliCommandCopied(false);
+        setCliCommandCopyError("Clipboard permission was blocked. Copy the command manually.");
+        showWarmupToast("Clipboard blocked. Command is ready to copy manually.", true);
+      }
+    } catch (err) {
+      console.error("Failed to copy CLI command:", err);
+      showWarmupToast(
+        `Copy command failed for ${accountName}: ${formatWarmupError(err)}`,
+        true
+      );
+    } finally {
+      setCopyingCliCommandId(null);
+    }
+  };
+
+  const retryCopyCliCommand = async () => {
+    if (!cliCommandDialog) return;
+
+    try {
+      await navigator.clipboard.writeText(cliCommandDialog.command);
+      setCliCommandCopied(true);
+      setCliCommandCopyError(null);
+      setTimeout(() => setCliCommandCopied(false), 1500);
+    } catch {
+      setCliCommandCopyError("Clipboard is still blocked. Select the text and copy it manually.");
     }
   };
 
@@ -747,6 +793,9 @@ function App() {
                   onWarmup={() =>
                     handleWarmupAccount(activeAccount.id, activeAccount.name)
                   }
+                  onCopyCliCommand={() =>
+                    handleCopyCliCommand(activeAccount.id, activeAccount.name)
+                  }
                   onDelete={() => handleDelete(activeAccount.id)}
                   onRefresh={() =>
                     refreshSingleUsage(activeAccount.id, { refreshMetadata: true })
@@ -755,6 +804,7 @@ function App() {
                   switching={switchingId === activeAccount.id}
                   switchDisabled={hasRunningProcesses ?? false}
                   warmingUp={isWarmingAll || warmingUpId === activeAccount.id}
+                  copyingCliCommand={copyingCliCommandId === activeAccount.id}
                   masked={maskedAccounts.has(activeAccount.id)}
                   onToggleMask={() => toggleMask(activeAccount.id)}
                 />
@@ -825,6 +875,9 @@ function App() {
                       account={account}
                       onSwitch={() => handleSwitch(account.id)}
                       onWarmup={() => handleWarmupAccount(account.id, account.name)}
+                      onCopyCliCommand={() =>
+                        handleCopyCliCommand(account.id, account.name)
+                      }
                       onDelete={() => handleDelete(account.id)}
                       onRefresh={() =>
                         refreshSingleUsage(account.id, { refreshMetadata: true })
@@ -833,6 +886,7 @@ function App() {
                       switching={switchingId === account.id}
                       switchDisabled={hasRunningProcesses ?? false}
                       warmingUp={isWarmingAll || warmingUpId === account.id}
+                      copyingCliCommand={copyingCliCommandId === account.id}
                       masked={maskedAccounts.has(account.id)}
                       onToggleMask={() => toggleMask(account.id)}
                     />
@@ -880,6 +934,55 @@ function App() {
         onCompleteOAuth={completeOAuthLogin}
         onCancelOAuth={cancelOAuthLogin}
       />
+
+      {/* CLI Command Fallback Modal */}
+      {cliCommandDialog && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl w-full max-w-2xl mx-4 shadow-xl">
+            <div className="flex items-center justify-between p-5 border-b border-gray-100 dark:border-gray-800">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                Codex CLI Command
+              </h2>
+              <button
+                onClick={() => setCliCommandDialog(null)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Run this in a terminal to use {cliCommandDialog.accountName} with an isolated CODEX_HOME.
+              </p>
+              <textarea
+                value={cliCommandDialog.command}
+                readOnly
+                onFocus={(event) => event.currentTarget.select()}
+                className="w-full h-28 px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-800 dark:text-gray-100 focus:outline-none focus:border-gray-400 dark:focus:border-gray-500 focus:ring-1 focus:ring-gray-400 dark:focus:ring-gray-500 font-mono"
+              />
+              {cliCommandCopyError && (
+                <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg text-amber-700 dark:text-amber-200 text-sm">
+                  {cliCommandCopyError}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-3 p-5 border-t border-gray-100 dark:border-gray-800">
+              <button
+                onClick={() => setCliCommandDialog(null)}
+                className="px-4 py-2.5 text-sm font-medium rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 transition-colors"
+              >
+                Close
+              </button>
+              <button
+                onClick={retryCopyCliCommand}
+                className="px-4 py-2.5 text-sm font-medium rounded-lg bg-gray-900 hover:bg-gray-800 dark:bg-gray-100 dark:hover:bg-gray-200 text-white dark:text-gray-900 transition-colors"
+              >
+                {cliCommandCopied ? "Copied" : "Try Copy Again"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Import/Export Config Modal */}
       {isConfigModalOpen && (
