@@ -5,6 +5,7 @@ BUNDLE_DIR := src-tauri/target/release/bundle
 DEB_DIR := $(BUNDLE_DIR)/deb
 PACKAGE_NAME := codex-switcher
 APP_PROCESS := codex-switcher
+TAURI_LOCAL_CONFIG := {"bundle":{"createUpdaterArtifacts":false}}
 
 .PHONY: check-update update build stop-app install-deb
 
@@ -33,7 +34,7 @@ update:
 	git rebase $(UPSTREAM_BRANCH)
 
 build: stop-app
-	pnpm tauri build --bundles deb
+	pnpm tauri build --bundles deb --config '$(TAURI_LOCAL_CONFIG)'
 	$(MAKE) install-deb
 
 stop-app:
